@@ -111,3 +111,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 
 STATIC_URL = '/static/'
+
+# Google client app credentials
+GOOGLE_CREDENTIALS_FILE = os.environ.get('GOOGLE_CREDENTIALS_FILE')
+GOOGLE_TOKEN_FILE = os.environ.get('GOOGLE_TOKEN_FILE')
