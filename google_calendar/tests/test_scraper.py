@@ -22,7 +22,6 @@ class TestScraper(TestCase):
     def test_store_event(self):
         """
         Tests creation of Events along with respective attendees
-        :return:
         """
         event_record = {
             'id': '3ia2h10m49f5gsfj2vqt278j7h_20191115T113000Z',

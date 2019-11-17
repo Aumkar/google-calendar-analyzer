@@ -26,7 +26,8 @@ from google_calendar.models import Event, Attendee, UserMetaData
 
 class AuthorizeAPI(APIView):
     """
-    Authorizes user by redirecting them google ouath for user's consent
+    Authorizes user by redirecting them to google ouath API for
+    completing user's consent
     """
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (OAuth2Authentication,)
@@ -37,15 +38,15 @@ class AuthorizeAPI(APIView):
             SCOPES)
 
         # After completion of user's consent google API will redirect request
-        # to following server
+        # to following url
         flow.redirect_uri = request.build_absolute_uri(
             reverse('google_calendar:oauth2_callback')
         )
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
-            # Maintaining user's token in the state, so that when google API
-            # redirects to callback API user identity can be retrieved
+            # Maintaining user's token in the `state`, so that when google API
+            # calls back to callback API, we can authenticate the user
             state=request.META['HTTP_AUTHORIZATION'].split()[-1]
         )
         return redirect(authorization_url)
@@ -53,15 +54,16 @@ class AuthorizeAPI(APIView):
 
 class OAuth2CallBackAPI(APIView):
     """
-    Callback API for google oauth which is hit ofter user's consent is completed
+    Callback API whic for google API will call after user's consent is completed
     """
     def get(self, request):
         state = request.GET['state']
         try:
-            # Retrieving user information from the token
+            # Authenticating user using `state`
             user = AccessToken.objects.get(token=state).user
         except AccessToken.DoesNotExist:
             raise PermissionDenied
+
         flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
             settings.GOOGLE_CRED_PATH, scopes=SCOPES, state=state)
         flow.redirect_uri = request.build_absolute_uri(
@@ -84,7 +86,7 @@ class OAuth2CallBackAPI(APIView):
 
 class ReportAPI(APIView):
     """
-    Serves report containing several stats about metrics
+    API to deliver report for calendar's events
     """
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (OAuth2Authentication, TokenAuthentication)
@@ -173,8 +175,7 @@ class ReportCalculator(object):
     @cached_property
     def _number_of_weeks(self):
         """
-        Calculates number of week from smallest start_datetime and
-        end_datetime.
+        Calculates number of week from smallest start_datetime to current date
         :return:
         """
         result_dict = self.event_queryset.aggregate(
@@ -208,7 +209,8 @@ class ReportCalculator(object):
         """
         Calculates dict for several stats for a `number of events` metrics
         - Total
-        - Last 3 months distribution
+        - Last 3 months distribution(It may have less than 3 if user have not
+        attended any event in whole month)
         - Months with most number of events
         - Months with least number of events
         - Weekly average
@@ -328,7 +330,8 @@ class ReportCalculator(object):
     def attendee(self):
         """
         Calculates dict containing several stats for attendee metrics
-        - Top 3 people with whom user has attended the events most
+        - Top 3 people with whom user has attended the events most. But if there
+        is a tie, then it may have more than 3 people
         :return: dict
         """
         attendees_counts = self._attendees_counts

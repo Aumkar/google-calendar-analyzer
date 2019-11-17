@@ -76,8 +76,7 @@ def create_attendees(event, attendees_dict):
 def store_events(user):
     """
     It fetches events from Google calendar API and stores them in the
-    respective models. It loads data in full replace. This will be only called
-    only for the first time after user is registeres, after that
+    respective models. It loads data in full replace.
 
     *Note*: Authorization information of an user needs to be stored in UserMetaData
     model before calling this function
@@ -116,7 +115,6 @@ def store_events(user):
         req = events_api.list_next(req, resp)
 
     # Setting up time zone for the user
-
     req = service.settings().get(setting='timezone')
     user_meta_data.time_zone = req.execute()['value']
     user_meta_data.save()

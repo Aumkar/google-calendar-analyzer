@@ -12,9 +12,9 @@ from google_calendar.models import UserMetaData
 
 class TestReportCalculator(TestCase):
 
-    def setUp(self) -> None:
+    def setUp(self):
         self.user = User.objects.create(username='test_user')
-        self.user_meta_data =UserMetaData.objects.create(
+        self.user_meta_data = UserMetaData.objects.create(
             user=self.user,
             refresh_token='XXX',
             access_token='XXX',
@@ -59,7 +59,7 @@ class TestReportCalculator(TestCase):
         mocked_week_count.assert_called_once_with()
         mocked_monthly_df.assert_called_once_with()
 
-        # Checking response for empty data frame
+        # Checking response when monthly data frame is empty
         df = pd.DataFrame(
             columns=['year', 'month', 'count']
         )
@@ -112,7 +112,7 @@ class TestReportCalculator(TestCase):
         mocked_week_count.assert_called_once_with()
         mocked_monthly_df.assert_called_once_with()
 
-        # Checking response for empty data frame
+        # Checking response when monthly data frame is empty
         df = pd.DataFrame(
             columns=['year', 'month', 'duration']
         )
