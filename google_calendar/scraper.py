@@ -15,6 +15,8 @@ def create_event(record, user):
     :param user: User instance
     :return: Event instance
     """
+    if record['status'] == 'cancelled':
+        return
     event = Event()
     event.user = user
     event.event_id = record['id']
@@ -27,8 +29,9 @@ def create_event(record, user):
     # Defaulting below field to False but it will be changed once user is found
     # in the attendee list
     event.is_attendee = False
-    event.start_datetime = parser.parse(record['start']['dateTime'])
-    event.end_datetime = parser.parse(record['end']['dateTime'])
+    start, end = record['start'], record['end']
+    event.start_datetime = parser.parse(start.get('dateTime') or start['date'])
+    event.end_datetime = parser.parse(end.get('dateTime') or end['date'])
     event.created_at = parser.parse(record['created'])
     event.save()
     create_attendees(event, record.get('attendees', []))

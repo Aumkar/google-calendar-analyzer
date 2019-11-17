@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import google_auth_oauthlib.flow
+import numpy as np
 import pandas as pd
 import pytz
 from dateutil.relativedelta import relativedelta
@@ -59,9 +60,10 @@ class OAuth2CallBackAPI(APIView):
         )
         flow.fetch_token(authorization_response=path)
         credentials = flow.credentials
-        UserMetaData.objects.create(user=user,
-                                 access_token=credentials.token,
-                                 refresh_token=credentials.refresh_token)
+        UserMetaData.objects.update_or_create(user=user, defaults={
+            'access_token': credentials.token,
+            'refresh_token': credentials.refresh_token
+        })
         scraper.store_events(user)
         return Response()
 
@@ -148,6 +150,8 @@ class ReportCalculator(object):
             'start_datetime__year': 'year',
             'start_datetime__month': 'month',
         }, inplace=True)
+        df['count'] = df['count'].astype(int)
+        df['duration'] = pd.to_timedelta(df['duration'])
         return df
 
     @cached_property
@@ -175,8 +179,10 @@ class ReportCalculator(object):
         ])
         df.rename(columns={
             'start_datetime__year': 'year',
-            'start_datetime__month': 'week',
+            'start_datetime__week': 'week',
         }, inplace=True)
+        df['count'] = df['count'].astype(int)
+        df['duration'] = pd.to_timedelta(df['duration'])
         return df
 
     @cached_property
@@ -215,7 +221,6 @@ class ReportCalculator(object):
             'count'
         )[['year', 'month', 'count']]
 
-        sorted_by_count_df['count'] = sorted_by_count_df['count'].astype(int)
         if not sorted_by_count_df.empty:
             sorted_by_count_df['month'] = sorted_by_count_df.apply(
                 lambda x: f"{x['year']}-{x['month']}", axis=1
@@ -224,7 +229,7 @@ class ReportCalculator(object):
         most_count = sorted_by_count_df.nlargest(1, 'count', keep='all')
         least_count = sorted_by_count_df.nsmallest(1, 'count', keep='all')
 
-        # Calculating number of meetings for last 3 months
+        # Calculating number of events for last 3 months
         last_3_months_df = monthly_events_df[
             (monthly_events_df['year'] >= self.last_3_month_date.year) &
             (monthly_events_df['month'] >= self.last_3_month_date.month)
@@ -236,12 +241,16 @@ class ReportCalculator(object):
             )
         del last_3_months_df['year']
 
+        # Weekly average
+        weekly_average = np.round(weekly_events_df['count'].mean(), 2)
+        weekly_average = weekly_events_df if not np.isnan(weekly_average) else 0
+
         result = {}
         result['total'] = monthly_events_df['count'].sum()
         result['last_3_months'] = last_3_months_df.to_dict(orient='r')
-        result['most_meetings'] = most_count.to_dict(orient='r')
-        result['least_meetings'] = least_count.to_dict(orient='r')
-        result['weekly_average'] = weekly_events_df['count'].mean().round(2)
+        result['most_events'] = most_count.to_dict(orient='r')
+        result['least_events'] = least_count.to_dict(orient='r')
+        result['weekly_average'] = weekly_average
         return result
 
     def time_spent(self):
@@ -262,9 +271,6 @@ class ReportCalculator(object):
             'duration'
         )[['year', 'month', 'duration']]
 
-        sorted_by_count_df['duration'] = pd.to_timedelta(
-            sorted_by_count_df['duration']
-        )
         if not sorted_by_count_df.empty:
             sorted_by_count_df['month'] = sorted_by_count_df.apply(
                 lambda x: f"{x['year']}-{x['month']}", axis=1
@@ -286,8 +292,9 @@ class ReportCalculator(object):
             )
         last_3_months_df['duration'] = last_3_months_df['duration'].map(str)
         del last_3_months_df['year']
+        weekly_average = np.round(weekly_events_df['duration'].dt.seconds.mean())
         weekly_average = str(pd.Timedelta(
-            seconds=weekly_events_df['duration'].dt.seconds.mean().round()
+            seconds=weekly_average if not np.isnan(weekly_average) else 0
         ))
 
         result = {}
@@ -305,7 +312,9 @@ class ReportCalculator(object):
         :return: dict
         """
         attendees_counts = self._attendees_counts
-        return [
+        result = {}
+        result['top_attendees'] = [
             {'name': key, 'count': val} for key, val
             in attendees_counts.nlargest(3, keep='all').items()
         ]
+        return result
