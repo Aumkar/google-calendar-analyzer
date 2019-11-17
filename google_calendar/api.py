@@ -6,7 +6,9 @@ import pandas as pd
 import pytz
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
-from django.db.models import ExpressionWrapper, F, DurationField, Sum, Count
+from django.db.models import ExpressionWrapper, F, DurationField, Sum, Count, \
+    Min
+from django.db.models.functions import Extract
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.functional import cached_property
@@ -76,6 +78,7 @@ class OAuth2CallBackAPI(APIView):
 
         # Scraping Calendar events
         scraper.store_events(user)
+
         return Response()
 
 
@@ -83,16 +86,19 @@ class ReportAPI(APIView):
     """
     Serves report containing several stats about metrics
     """
-
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (OAuth2Authentication, TokenAuthentication)
+
     def get(self, request):
         user = request.user
+
         extra_filters = {}
         search = request.GET.get('search')
         if search:
             extra_filters['summary__icontains'] = search
+
         calculator = ReportCalculator(user, **extra_filters)
+
         response = {}
         response['events'] = calculator.events()
         response['time_spent'] = calculator.time_spent()
@@ -113,6 +119,10 @@ class ReportCalculator(object):
         :param user: User instance
         """
         self.user = user
+        if user.cal_meta_data.time_zone:
+            self.time_zone = pytz.timezone(user.cal_meta_data.time_zone)
+        else:
+            self.time_zone = pytz.utc
         self.last_3_month_date = datetime.today() - relativedelta(
             months=2, day=1, hour=0, minute=0, second=0, microsecond=0
         )
@@ -144,57 +154,38 @@ class ReportCalculator(object):
             self.event_queryset.annotate(
                 duration=ExpressionWrapper(
                     F('end_datetime') - F('start_datetime'),
-                       output_field=DurationField()
+                    output_field=DurationField()
                 )
             ).values(
-                'start_datetime__year',
-                'start_datetime__month'
-
+                year=Extract('start_datetime', 'year', tzinfo=self.time_zone),
+                month=Extract('start_datetime', 'month', tzinfo=self.time_zone),
             ).annotate(
                 duration=Sum('duration'),
                 count=Count('*')
             )
         ), columns=[
-            'start_datetime__year', 'start_datetime__month', 'duration', 'count'
+            'year', 'month', 'duration', 'count'
         ])
-        df.rename(columns={
-            'start_datetime__year': 'year',
-            'start_datetime__month': 'month',
-        }, inplace=True)
         df['count'] = df['count'].astype(int)
         df['duration'] = pd.to_timedelta(df['duration'])
         return df
 
     @cached_property
-    def _weekly_events_df(self):
+    def _number_of_weeks(self):
         """
-        Creates a data frame containing events aggregated over week
-        :return: DataFrame()
+        Calculates number of week from smallest start_datetime and
+        end_datetime.
+        :return:
         """
-        df = pd.DataFrame(list(
-            self.event_queryset.annotate(
-                duration=ExpressionWrapper(
-                    F('end_datetime') - F('start_datetime'),
-                    output_field=DurationField()
-                )
-            ).values(
-                'start_datetime__year',
-                'start_datetime__week'
+        result_dict = self.event_queryset.aggregate(
+            start=Min('start_datetime')
+        )
+        if result_dict['start']:
+            total_days = (datetime.now(tz=self.time_zone) - result_dict['start']).days
+            return round(total_days / 7)
+        else:
+            return 0
 
-            ).annotate(
-                duration=Sum('duration'),
-                count=Count('*')
-            )
-        ), columns=[
-            'start_datetime__year', 'start_datetime__week', 'duration', 'count'
-        ])
-        df.rename(columns={
-            'start_datetime__year': 'year',
-            'start_datetime__week': 'week',
-        }, inplace=True)
-        df['count'] = df['count'].astype(int)
-        df['duration'] = pd.to_timedelta(df['duration'])
-        return df
 
     @cached_property
     def _attendees_counts(self):
@@ -225,7 +216,6 @@ class ReportCalculator(object):
         :return: dict
         """
         monthly_events_df = self._monthly_events_df
-        weekly_events_df = self._weekly_events_df
 
         # Calculating months for most and least number of events
         sorted_by_count_df = monthly_events_df.sort_values(
@@ -253,8 +243,15 @@ class ReportCalculator(object):
         del last_3_months_df['year']
 
         # Weekly average
-        weekly_average = np.round(weekly_events_df['count'].mean(), 2)
-        weekly_average = weekly_average if not np.isnan(weekly_average) else 0
+        week_count = self._number_of_weeks
+        if week_count:
+            weekly_average = np.round(
+                monthly_events_df['count'].sum()/week_count, 2
+            )
+            weekly_average = weekly_average if not np.isnan(
+                weekly_average) else 0
+        else:
+            weekly_average = 0
 
         result = {}
         result['total'] = monthly_events_df['count'].sum()
@@ -275,7 +272,6 @@ class ReportCalculator(object):
         :return: dict
         """
         monthly_events_df = self._monthly_events_df
-        weekly_events_df = self._weekly_events_df
 
         # Calculating months for most and least amount of time spent
         sorted_by_count_df = monthly_events_df.sort_values(
@@ -303,10 +299,17 @@ class ReportCalculator(object):
             )
         last_3_months_df['duration'] = last_3_months_df['duration'].map(str)
         del last_3_months_df['year']
-        weekly_average = np.round(weekly_events_df['duration'].dt.seconds.mean())
-        weekly_average = str(pd.Timedelta(
-            seconds=weekly_average if not np.isnan(weekly_average) else 0
-        ))
+
+        week_count = self._number_of_weeks
+        if week_count:
+            weekly_average = np.round(
+                monthly_events_df['duration'].dt.seconds.sum() / week_count
+            )
+            weekly_average = str(pd.Timedelta(
+                seconds=weekly_average if not np.isnan(weekly_average) else 0
+            ))
+        else:
+            weekly_average = 0
 
         result = {}
         result['total'] = str(monthly_events_df['duration'].sum())

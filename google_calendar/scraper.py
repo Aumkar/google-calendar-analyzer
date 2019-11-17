@@ -1,20 +1,22 @@
+import pytz
 from dateutil import parser
 from django.conf import settings
 from django.db import transaction
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from google_calendar import API_NAME, API_VERSION, ACCEPTED
+from google_calendar import API_NAME, API_VERSION, ACCEPTED, SCOPES
 from google_calendar.models import Event, Attendee
 
 
 def create_event(record, user):
     """
-    Create Event object with provided information
+    Creates Event and its related data with the data received from API
     :param record: dict received from API
     :param user: User instance
     :return: Event instance
     """
+    # If the event is cancelled, we don't need to store it
     if record['status'] == 'cancelled':
         return
 
@@ -27,12 +29,19 @@ def create_event(record, user):
     event.is_creator = record['creator'].get('self', False)
     if not event.is_creator:
         event.creator_email = record['creator'].get('email', '')
-    # Defaulting below field to False but it will be changed once user is found
-    # in the attendee list
+    # Defaulting below field to False but it will be updated once we process
+    # attendees list
     event.is_attendee = False
+
     start, end = record['start'], record['end']
-    event.start_datetime = parser.parse(start.get('dateTime') or start['date'])
-    event.end_datetime = parser.parse(end.get('dateTime') or end['date'])
+    if start.get('dateTime'):
+        event.start_datetime = parser.parse(start['dateTime'])
+    else:
+        event.start_datetime = parser.parse(start['date']).replace(tzinfo=pytz.utc)
+    if end.get('dateTime'):
+        event.end_datetime = parser.parse(end['dateTime'])
+    else:
+        event.end_datetime = parser.parse(end['date']).replace(tzinfo=pytz.utc)
     event.created_at = parser.parse(record['created'])
     event.save()
     create_attendees(event, record.get('attendees', []))
@@ -71,14 +80,18 @@ def store_events(user):
     :param user: User for which event will be stored
     """
     user_meta_data = user.cal_meta_data
+
+    # Connecting to API
     creds = Credentials(
         token=user_meta_data.access_token,
         refresh_token=user_meta_data.refresh_token,
         token_uri=settings.GOOGLE_TOKEN_URI,
         client_id=settings.GOOGLE_CLIENT_ID,
-        client_secret=settings.GOOGLE_CLIENT_SECRET
+        client_secret=settings.GOOGLE_CLIENT_SECRET,
+        scopes=SCOPES
     )
-    events_api = build(API_NAME, API_VERSION, credentials=creds).events()
+    service = build(API_NAME, API_VERSION, credentials=creds)
+    events_api = service.events()
     req = events_api.list(
         calendarId='primary',
         maxResults=2500,
@@ -86,43 +99,20 @@ def store_events(user):
     )
 
     # Deleting existing events
+    Attendee.objects.filter(event__user=user).delete()
     Event.objects.filter(user=user).delete()
 
-    # Adding records
-    next_sync_token = None
+    # Processing the API response and creating events
     while req:
         resp = req.execute()
-        next_sync_token = resp['nextSyncToken']
-        # Process response
         with transaction.atomic():
             for record in resp['items']:
                 create_event(record, user)
+        # Requesting next page
         req = events_api.list_next(req, resp)
 
-    # It will be used to sync events against Google calendar API
-    user_meta_data.next_sync_token = next_sync_token
+    # Setting up time zone for the user
+
+    req = service.settings().get(setting='timezone')
+    user_meta_data.time_zone = req.execute()['value']
     user_meta_data.save()
-
-
-def sync_events(user):
-    """
-    It syncs events from Google calendar API.
-    i.e. Events which are newly added/edited after last fetch will be updated
-    :param user: User instance
-    """
-    user_meta_data = user.cal_meta_data
-    creds = Credentials(
-        token=user_meta_data.access_token,
-        refresh_token=user_meta_data.refresh_token,
-        token_uri=settings.GOOGLE_TOKEN_URI,
-        client_id=settings.GOOGLE_CLIENT_ID,
-        client_secret=settings.GOOGLE_CLIENT_SECRET
-    )
-
-    events_api = build(API_NAME, API_VERSION, credentials=creds).events()
-    req = events_api.list(
-        calendarId='primary',
-        maxResults=2500,
-        maxAttendees=1000,
-        nextSyncToken=user_meta_data.next_sync_token
-    )

@@ -54,7 +54,7 @@ class Event(models.Model):
         help_text='Datetime when event is created on google calendar'
     )
 
-    def __unicode__(self):
+    def __str__(self):
         return '{}-{}'.format(self.pk, self.summary)
 
 
@@ -79,7 +79,7 @@ class Attendee(models.Model):
     class Meta:
         unique_together = ('event', 'email')
 
-    def __unicode__(self):
+    def __str__(self):
         return '{}-{}()'.format(self.pk, self.email, self.response)
 
 
@@ -111,4 +111,10 @@ class UserMetaData(models.Model):
         max_length=32,
         blank=True,
         help_text='This token is used to pull delta events from calendar API'
+    )
+
+    time_zone = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text='Timezone of the user'
     )
