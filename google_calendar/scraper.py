@@ -19,7 +19,7 @@ def create_event(record, user):
     # If the event is cancelled, we don't need to store it
     if record['status'] == 'cancelled':
         return
-
+    time_zone = pytz.timezone(user.cal_meta_data.time_zone or 'UTC')
     event = Event()
     event.user = user
     event.event_id = record['id']
@@ -37,11 +37,11 @@ def create_event(record, user):
     if start.get('dateTime'):
         event.start_datetime = parser.parse(start['dateTime'])
     else:
-        event.start_datetime = parser.parse(start['date']).replace(tzinfo=pytz.utc)
+        event.start_datetime = time_zone.localize(parser.parse(start['date']))
     if end.get('dateTime'):
         event.end_datetime = parser.parse(end['dateTime'])
     else:
-        event.end_datetime = parser.parse(end['date']).replace(tzinfo=pytz.utc)
+        event.end_datetime = time_zone.localize(parser.parse(end['date']))
     event.created_at = parser.parse(record['created'])
     event.save()
     create_attendees(event, record.get('attendees', []))
@@ -60,7 +60,11 @@ def create_attendees(event, attendees_dict):
         attendee = Attendee()
         attendee.event = event
         attendee.email = record.get('email', '')
-        attendee.response = record['responseStatus']
+        # Converting camelCase to snake_case
+        attendee.response = ''.join(
+            i if i.islower() else f'_{i.lower()}' for i
+            in record['responseStatus']
+        )
         if record.get('self') and record.get('responseStatus') == ACCEPTED:
             event.is_attendee = True
         else:
