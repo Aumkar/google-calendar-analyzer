@@ -1,3 +1,4 @@
+import json
 import os
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
@@ -24,6 +25,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'django_extensions',
+    'oauth2_provider',
+    'rest_framework.authtoken',
 
     # Apps defined in the project
     'google_calendar.apps.GoogleCalendarConfig'
@@ -113,5 +116,18 @@ USE_TZ = True
 STATIC_URL = '/static/'
 
 # Google client app credentials
-GOOGLE_CREDENTIALS_FILE = os.environ.get('GOOGLE_CREDENTIALS_FILE')
-GOOGLE_TOKEN_FILE = os.environ.get('GOOGLE_TOKEN_FILE')
+GOOGLE_CRED_PATH = os.environ.get('GOOGLE_CRED_PATH')
+
+with open(GOOGLE_CRED_PATH) as fp:
+    cred = json.load(fp)
+
+GOOGLE_CLIENT_ID = cred['installed']['client_id']
+GOOGLE_CLIENT_SECRET = cred['installed']['client_secret']
+GOOGLE_TOKEN_URI = cred['installed']['token_uri']
+
+
+# OAuthToken
+OAUTH2_PROVIDER = {
+    'ACCESS_TOKEN_EXPIRE_SECONDS': 432000,
+    'ROTATE_REFRESH_TOKEN': False
+}

@@ -1,24 +1,80 @@
 from datetime import datetime
 
+import google_auth_oauthlib.flow
 import pandas as pd
 import pytz
 from dateutil.relativedelta import relativedelta
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.db.models import ExpressionWrapper, F, DurationField, Sum, Count
+from django.shortcuts import redirect
+from django.urls import reverse
 from django.utils.functional import cached_property
-from rest_framework.generics import GenericAPIView
+from oauth2_provider.admin import AccessToken
+from oauth2_provider.contrib.rest_framework import OAuth2Authentication
+from rest_framework import permissions
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from google_calendar import ACCEPTED
-from google_calendar.models import Event, Attendee
+from google_calendar import ACCEPTED, SCOPES, scraper
+from google_calendar.models import Event, Attendee, UserMetaData
 
 
-class ReportApi(GenericAPIView):
+class AuthorizeAPI(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+    authentication_classes = (OAuth2Authentication,)
+
+    def get(self, request):
+        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+            settings.GOOGLE_CRED_PATH,
+            SCOPES)
+        flow.redirect_uri = request.build_absolute_uri(
+            reverse('google_calendar:oauth2_callback')
+        )
+        print(request.META)
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            state=request.META['HTTP_AUTHORIZATION'].split()[-1]
+        )
+        print(state)
+        return redirect(authorization_url)
+
+
+class OAuth2CallBackAPI(APIView):
+    def get(self, request):
+        state = request.GET['state']
+        try:
+            user = AccessToken.objects.get(token=state).user
+        except AccessToken.DoesNotExist:
+            raise PermissionDenied
+        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+            settings.GOOGLE_CRED_PATH, scopes=SCOPES, state=state)
+        flow.redirect_uri = request.build_absolute_uri(
+            reverse('google_calendar:oauth2_callback')
+        )
+        path = request.build_absolute_uri(
+            request.get_full_path()
+        )
+        flow.fetch_token(authorization_response=path)
+        credentials = flow.credentials
+        UserMetaData.objects.create(user=user,
+                                 access_token=credentials.token,
+                                 refresh_token=credentials.refresh_token)
+        scraper.store_events(user)
+        return Response()
+
+
+class ReportAPI(APIView):
     """
     Serves report containing several stats about metrics
     """
+
+    permission_classes = (permissions.IsAuthenticated,)
+    authentication_classes = (OAuth2Authentication, TokenAuthentication)
     def get(self, request):
-        user = User.objects.first()
+        user = request.user
         extra_filters = {}
         search = request.GET.get('search')
         if search:

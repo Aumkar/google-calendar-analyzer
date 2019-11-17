@@ -77,3 +77,34 @@ class Attendee(models.Model):
 
     def __unicode__(self):
         return '{}-{}()'.format(self.pk, self.email, self.response)
+
+
+class UserMetaData(models.Model):
+    """
+    Stores meta data for an user which is specific to google calendar API
+
+    """
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='cal_meta_data',
+        help_text='User for which meta data is stored',
+    )
+
+    # Oauth credentials for an user
+    access_token = models.CharField(
+        max_length=256,
+        blank=False,
+        help_text='Token used to access the content'
+    )
+    refresh_token = models.CharField(
+        max_length=256,
+        blank=False,
+        help_text='Token used for refreshing token when access token is expired'
+    )
+
+    next_sync_token = models.CharField(
+        max_length=32,
+        blank=True,
+        help_text='This token is used to pull delta events from calendar API'
+    )

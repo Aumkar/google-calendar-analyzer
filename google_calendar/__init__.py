@@ -1,4 +1,3 @@
-
 # Google calendar API
 API_NAME = 'calendar'
 API_VERSION = 'v3'

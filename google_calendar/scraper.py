@@ -1,6 +1,7 @@
-import pickle
 from dateutil import parser
+from django.conf import settings
 from django.db import transaction
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from google_calendar import API_NAME, API_VERSION, ACCEPTED
@@ -64,8 +65,14 @@ def store_events(user):
     model before calling this function
     :param user: User for which event will be stored
     """
-    with open('token.pickle', 'rb') as token:
-        creds = pickle.load(token)
+    user_meta_data = user.cal_meta_data
+    creds = Credentials(
+        token=user_meta_data.access_token,
+        refresh_token=user_meta_data.refresh_token,
+        token_uri=settings.GOOGLE_TOKEN_URI,
+        client_id=settings.GOOGLE_CLIENT_ID,
+        client_secret=settings.GOOGLE_CLIENT_SECRET
+    )
     events_api = build(API_NAME, API_VERSION, credentials=creds).events()
     next_sync_token = None
     req = events_api.list(calendarId='primary',
