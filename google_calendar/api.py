@@ -23,6 +23,9 @@ from google_calendar.models import Event, Attendee, UserMetaData
 
 
 class AuthorizeAPI(APIView):
+    """
+    Authorizes user by redirecting them google ouath for user's consent
+    """
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (OAuth2Authentication,)
 
@@ -30,23 +33,30 @@ class AuthorizeAPI(APIView):
         flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
             settings.GOOGLE_CRED_PATH,
             SCOPES)
+
+        # After completion of user's consent google API will redirect request
+        # to following server
         flow.redirect_uri = request.build_absolute_uri(
             reverse('google_calendar:oauth2_callback')
         )
-        print(request.META)
         authorization_url, state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
+            # Maintaining user's token in the state, so that when google API
+            # redirects to callback API user identity can be retrieved
             state=request.META['HTTP_AUTHORIZATION'].split()[-1]
         )
-        print(state)
         return redirect(authorization_url)
 
 
 class OAuth2CallBackAPI(APIView):
+    """
+    Callback API for google oauth which is hit ofter user's consent is completed
+    """
     def get(self, request):
         state = request.GET['state']
         try:
+            # Retrieving user information from the token
             user = AccessToken.objects.get(token=state).user
         except AccessToken.DoesNotExist:
             raise PermissionDenied
@@ -55,15 +65,16 @@ class OAuth2CallBackAPI(APIView):
         flow.redirect_uri = request.build_absolute_uri(
             reverse('google_calendar:oauth2_callback')
         )
-        path = request.build_absolute_uri(
-            request.get_full_path()
-        )
+        path = request.get_full_path()
         flow.fetch_token(authorization_response=path)
-        credentials = flow.credentials
+
+        # Storing users credentials in the DB
         UserMetaData.objects.update_or_create(user=user, defaults={
-            'access_token': credentials.token,
-            'refresh_token': credentials.refresh_token
+            'access_token': flow.credentials.token,
+            'refresh_token': flow.credentials.refresh_token
         })
+
+        # Scraping Calendar events
         scraper.store_events(user)
         return Response()
 
@@ -243,7 +254,7 @@ class ReportCalculator(object):
 
         # Weekly average
         weekly_average = np.round(weekly_events_df['count'].mean(), 2)
-        weekly_average = weekly_events_df if not np.isnan(weekly_average) else 0
+        weekly_average = weekly_average if not np.isnan(weekly_average) else 0
 
         result = {}
         result['total'] = monthly_events_df['count'].sum()
@@ -314,7 +325,7 @@ class ReportCalculator(object):
         attendees_counts = self._attendees_counts
         result = {}
         result['top_attendees'] = [
-            {'name': key, 'count': val} for key, val
+            {'name': key, 'events': val} for key, val
             in attendees_counts.nlargest(3, keep='all').items()
         ]
         return result

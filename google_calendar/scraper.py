@@ -17,6 +17,7 @@ def create_event(record, user):
     """
     if record['status'] == 'cancelled':
         return
+
     event = Event()
     event.user = user
     event.event_id = record['id']
@@ -40,7 +41,7 @@ def create_event(record, user):
 
 def create_attendees(event, attendees_dict):
     """
-    Creates
+    Creates Attendee for an single Event
     :param event:
     :param attendees_dict:
     :return:
@@ -62,9 +63,10 @@ def create_attendees(event, attendees_dict):
 def store_events(user):
     """
     It fetches events from Google calendar API and stores them in the
-    respective models. It loads data in full replace.
+    respective models. It loads data in full replace. This will be only called
+    only for the first time after user is registeres, after that
 
-    *Note*: Authorization information of an user needs to be stored in ______
+    *Note*: Authorization information of an user needs to be stored in UserMetaData
     model before calling this function
     :param user: User for which event will be stored
     """
@@ -77,14 +79,17 @@ def store_events(user):
         client_secret=settings.GOOGLE_CLIENT_SECRET
     )
     events_api = build(API_NAME, API_VERSION, credentials=creds).events()
-    next_sync_token = None
-    req = events_api.list(calendarId='primary',
-                          syncToken=next_sync_token,
-                          maxResults=2500)
-    # Full replace
+    req = events_api.list(
+        calendarId='primary',
+        maxResults=2500,
+        maxAttendees=1000
+    )
+
+    # Deleting existing events
     Event.objects.filter(user=user).delete()
 
     # Adding records
+    next_sync_token = None
     while req:
         resp = req.execute()
         next_sync_token = resp['nextSyncToken']
@@ -93,3 +98,31 @@ def store_events(user):
             for record in resp['items']:
                 create_event(record, user)
         req = events_api.list_next(req, resp)
+
+    # It will be used to sync events against Google calendar API
+    user_meta_data.next_sync_token = next_sync_token
+    user_meta_data.save()
+
+
+def sync_events(user):
+    """
+    It syncs events from Google calendar API.
+    i.e. Events which are newly added/edited after last fetch will be updated
+    :param user: User instance
+    """
+    user_meta_data = user.cal_meta_data
+    creds = Credentials(
+        token=user_meta_data.access_token,
+        refresh_token=user_meta_data.refresh_token,
+        token_uri=settings.GOOGLE_TOKEN_URI,
+        client_id=settings.GOOGLE_CLIENT_ID,
+        client_secret=settings.GOOGLE_CLIENT_SECRET
+    )
+
+    events_api = build(API_NAME, API_VERSION, credentials=creds).events()
+    req = events_api.list(
+        calendarId='primary',
+        maxResults=2500,
+        maxAttendees=1000,
+        nextSyncToken=user_meta_data.next_sync_token
+    )
