@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -131,3 +132,8 @@ OAUTH2_PROVIDER = {
     'ACCESS_TOKEN_EXPIRE_SECONDS': 432000,
     'ROTATE_REFRESH_TOKEN': False
 }
+
+# Test settings
+# Using sqlite3(in-memory) is tests are running
+if 'test' in sys.argv:
+    DATABASES['default'] = {'ENGINE': 'django.db.backends.sqlite3'}

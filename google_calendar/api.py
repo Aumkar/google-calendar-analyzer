@@ -100,7 +100,7 @@ class ReportAPI(APIView):
         calculator = ReportCalculator(user, **extra_filters)
 
         response = {}
-        response['events'] = calculator.events()
+        response['number_of_events'] = calculator.number_of_events()
         response['time_spent'] = calculator.time_spent()
         response['attendee'] = calculator.attendee()
         return Response(response)
@@ -186,7 +186,6 @@ class ReportCalculator(object):
         else:
             return 0
 
-
     @cached_property
     def _attendees_counts(self):
         """
@@ -205,9 +204,9 @@ class ReportCalculator(object):
             )
         ))
 
-    def events(self):
+    def number_of_events(self):
         """
-        Calculates dict for several stats for a `events` metrics
+        Calculates dict for several stats for a `number of events` metrics
         - Total
         - Last 3 months distribution
         - Months with most number of events
@@ -215,30 +214,33 @@ class ReportCalculator(object):
         - Weekly average
         :return: dict
         """
-        monthly_events_df = self._monthly_events_df
+        monthly_events_df = self._monthly_events_df[
+            ['year', 'month', 'count']
+        ].copy()
+        monthly_events_df.rename(columns={'count': 'value'}, inplace=True)
 
         # Calculating months for most and least number of events
         sorted_by_count_df = monthly_events_df.sort_values(
-            'count'
-        )[['year', 'month', 'count']]
+            'value'
+        )[['year', 'month', 'value']]
 
         if not sorted_by_count_df.empty:
             sorted_by_count_df['month'] = sorted_by_count_df.apply(
-                lambda x: f"{x['year']}-{x['month']}", axis=1
+                lambda x: f"{x['year']}-{x['month']:02}", axis=1
             )
         del sorted_by_count_df['year']
-        most_count = sorted_by_count_df.nlargest(1, 'count', keep='all')
-        least_count = sorted_by_count_df.nsmallest(1, 'count', keep='all')
+        most_count = sorted_by_count_df.nlargest(1, 'value', keep='all')
+        least_count = sorted_by_count_df.nsmallest(1, 'value', keep='all')
 
         # Calculating number of events for last 3 months
         last_3_months_df = monthly_events_df[
             (monthly_events_df['year'] >= self.last_3_month_date.year) &
             (monthly_events_df['month'] >= self.last_3_month_date.month)
-            ][['month', 'year', 'count']]
+            ][['month', 'year', 'value']]
         last_3_months_df.sort_values(['year', 'month'], inplace=True)
         if not last_3_months_df.empty:
             last_3_months_df['month'] = last_3_months_df.apply(
-                lambda x: f"{x['year']}-{x['month']}", axis=1
+                lambda x: f"{x['year']}-{x['month']:02}", axis=1
             )
         del last_3_months_df['year']
 
@@ -246,7 +248,7 @@ class ReportCalculator(object):
         week_count = self._number_of_weeks
         if week_count:
             weekly_average = np.round(
-                monthly_events_df['count'].sum()/week_count, 2
+                monthly_events_df['value'].sum()/week_count, 2
             )
             weekly_average = weekly_average if not np.isnan(
                 weekly_average) else 0
@@ -254,10 +256,10 @@ class ReportCalculator(object):
             weekly_average = 0
 
         result = {}
-        result['total'] = monthly_events_df['count'].sum()
+        result['total'] = monthly_events_df['value'].sum()
         result['last_3_months'] = last_3_months_df.to_dict(orient='r')
-        result['most_events'] = most_count.to_dict(orient='r')
-        result['least_events'] = least_count.to_dict(orient='r')
+        result['most'] = most_count.to_dict(orient='r')
+        result['least'] = least_count.to_dict(orient='r')
         result['weekly_average'] = weekly_average
         return result
 
@@ -271,39 +273,43 @@ class ReportCalculator(object):
         - Weekly average
         :return: dict
         """
-        monthly_events_df = self._monthly_events_df
+        monthly_events_df = self._monthly_events_df[
+            ['year', 'month', 'duration']
+        ].copy()
+        monthly_events_df.rename(columns={'duration': 'value'}, inplace=True)
 
         # Calculating months for most and least amount of time spent
         sorted_by_count_df = monthly_events_df.sort_values(
-            'duration'
-        )[['year', 'month', 'duration']]
+            'value'
+        )[['year', 'month', 'value']]
 
         if not sorted_by_count_df.empty:
             sorted_by_count_df['month'] = sorted_by_count_df.apply(
-                lambda x: f"{x['year']}-{x['month']}", axis=1
+                lambda x: f"{x['year']}-{x['month']:02}", axis=1
             )
         del sorted_by_count_df['year']
-        most_time_spent = sorted_by_count_df.nlargest(1, 'duration', keep='all')
-        least_time_spent = sorted_by_count_df.nsmallest(1, 'duration', keep='all')
-        most_time_spent['duration'] = most_time_spent['duration'].map(str)
-        least_time_spent['duration'] = least_time_spent['duration'].map(str)
+        most_time_spent = sorted_by_count_df.nlargest(1, 'value', keep='all')
+        least_time_spent = sorted_by_count_df.nsmallest(1, 'value', keep='all')
+        most_time_spent['value'] = most_time_spent['value'].map(str)
+        least_time_spent['value'] = least_time_spent['value'].map(str)
 
         # Calculating time spent for past 3 months
         last_3_months_df = monthly_events_df[
             (monthly_events_df['year'] >= self.last_3_month_date.year) &
             (monthly_events_df['month'] >= self.last_3_month_date.month)
-            ][['month', 'year', 'duration']]
+            ][['month', 'year', 'value']]
+        last_3_months_df.sort_values(['year', 'month'], inplace=True)
         if not last_3_months_df.empty:
             last_3_months_df['month'] = last_3_months_df.apply(
-                lambda x: f"{x['year']}-{x['month']}", axis=1
+                lambda x: f"{x['year']}-{x['month']:02}", axis=1
             )
-        last_3_months_df['duration'] = last_3_months_df['duration'].map(str)
+        last_3_months_df['value'] = last_3_months_df['value'].map(str)
         del last_3_months_df['year']
 
         week_count = self._number_of_weeks
         if week_count:
             weekly_average = np.round(
-                monthly_events_df['duration'].dt.seconds.sum() / week_count
+                monthly_events_df['value'].dt.total_seconds().sum() / week_count
             )
             weekly_average = str(pd.Timedelta(
                 seconds=weekly_average if not np.isnan(weekly_average) else 0
@@ -312,10 +318,10 @@ class ReportCalculator(object):
             weekly_average = 0
 
         result = {}
-        result['total'] = str(monthly_events_df['duration'].sum())
+        result['total'] = str(monthly_events_df['value'].sum())
         result['last_3_months'] = last_3_months_df.to_dict(orient='r')
-        result['most_time_spent'] = most_time_spent.to_dict(orient='r')
-        result['least_time_spent'] = least_time_spent.to_dict(orient='r')
+        result['most'] = most_time_spent.to_dict(orient='r')
+        result['least'] = least_time_spent.to_dict(orient='r')
         result['weekly_average'] = weekly_average
         return result
 
@@ -328,7 +334,7 @@ class ReportCalculator(object):
         attendees_counts = self._attendees_counts
         result = {}
         result['top_attendees'] = [
-            {'name': key, 'events': val} for key, val
+            {'name': key, 'number_of_events': val} for key, val
             in attendees_counts.nlargest(3, keep='all').items()
         ]
         return result
