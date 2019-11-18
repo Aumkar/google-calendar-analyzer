@@ -155,7 +155,7 @@ class ReportCalculator(object):
                 month=Extract('start_datetime', 'month', tzinfo=self.time_zone),
             ).annotate(
                 duration=Sum('duration'),
-                number_of_meetings=Count('*')
+                count=Count('*')
             ).order_by(
                 'year',
                 'month'
