@@ -12,11 +12,9 @@ from django.db.models.functions import Extract
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.functional import cached_property
-from oauth2_provider.admin import AccessToken
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication
 from rest_framework import permissions
-from rest_framework.authentication import TokenAuthentication
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -30,7 +28,7 @@ class AuthorizeAPI(APIView):
     completing user's consent
     """
     permission_classes = (permissions.IsAuthenticated,)
-    authentication_classes = (OAuth2Authentication,)
+    authentication_classes = (SessionAuthentication,)
 
     def get(self, request):
         flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
@@ -44,26 +42,20 @@ class AuthorizeAPI(APIView):
         )
         authorization_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true',
-            # Maintaining user's token in the `state`, so that when google API
-            # calls back to callback API, we can authenticate the user
-            state=request.META['HTTP_AUTHORIZATION'].split()[-1]
+            include_granted_scopes='true'
         )
         return redirect(authorization_url)
 
 
 class OAuth2CallBackAPI(APIView):
     """
-    Callback API whic for google API will call after user's consent is completed
+    Callback API which for google API will call after user's consent is completed
     """
+    permission_classes = (permissions.IsAuthenticated,)
+    authentication_classes = (SessionAuthentication,)
+
     def get(self, request):
         state = request.GET['state']
-        try:
-            # Authenticating user using `state`
-            user = AccessToken.objects.get(token=state).user
-        except AccessToken.DoesNotExist:
-            raise PermissionDenied
-
         flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
             settings.GOOGLE_CRED_PATH, scopes=SCOPES, state=state)
         flow.redirect_uri = request.build_absolute_uri(
@@ -73,13 +65,13 @@ class OAuth2CallBackAPI(APIView):
         flow.fetch_token(authorization_response=path)
 
         # Storing users credentials in the DB
-        UserMetaData.objects.update_or_create(user=user, defaults={
+        UserMetaData.objects.update_or_create(user=request.user, defaults={
             'access_token': flow.credentials.token,
             'refresh_token': flow.credentials.refresh_token
         })
 
         # Scraping Calendar events
-        scraper.store_events(user)
+        scraper.store_events(request.user)
 
         return Response()
 
@@ -89,7 +81,7 @@ class ReportAPI(APIView):
     API to deliver report for calendar's events
     """
     permission_classes = (permissions.IsAuthenticated,)
-    authentication_classes = (OAuth2Authentication, TokenAuthentication)
+    authentication_classes = (OAuth2Authentication, SessionAuthentication)
 
     def get(self, request):
         user = request.user
@@ -163,7 +155,10 @@ class ReportCalculator(object):
                 month=Extract('start_datetime', 'month', tzinfo=self.time_zone),
             ).annotate(
                 duration=Sum('duration'),
-                count=Count('*')
+                number_of_meetings=Count('*')
+            ).order_by(
+                'year',
+                'month'
             )
         ), columns=[
             'year', 'month', 'duration', 'count'
@@ -199,7 +194,7 @@ class ReportCalculator(object):
                 'email'
             ).annotate(
                 count=Count('*')
-            ).order_by('-count').values_list(
+            ).values_list(
                 'email',
                 'count'
             )
@@ -268,7 +263,7 @@ class ReportCalculator(object):
     def time_spent(self):
         """
         Calculates dict for several stats for a `time_spent` metrics
-        - Total
+        - Total time spent
         - Last 3 months distribution
         - Months in which user spent most time
         - Months in which user spent least time
