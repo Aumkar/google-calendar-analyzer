@@ -113,10 +113,13 @@ class ReportCalculator(object):
         :param user: User instance
         """
         self.user = user
+
         if user.cal_meta_data.time_zone:
             self.time_zone = pytz.timezone(user.cal_meta_data.time_zone)
         else:
+            # Defaulting time_zone to UTC
             self.time_zone = pytz.utc
+
         self.last_3_month_date = datetime.today() - relativedelta(
             months=2, day=1, hour=0, minute=0, second=0, microsecond=0
         )
@@ -146,37 +149,39 @@ class ReportCalculator(object):
         """
         df = pd.DataFrame(list(
             self.event_queryset.annotate(
-                duration=ExpressionWrapper(
+                time_spent=ExpressionWrapper(
                     F('end_datetime') - F('start_datetime'),
                     output_field=DurationField()
                 )
             ).values(
+                # Extracting year and month while localizing them
                 year=Extract('start_datetime', 'year', tzinfo=self.time_zone),
                 month=Extract('start_datetime', 'month', tzinfo=self.time_zone),
             ).annotate(
-                duration=Sum('duration'),
-                count=Count('*')
+                time_spent=Sum('time_spent'),
+                number_of_events=Count('*')
             ).order_by(
                 'year',
                 'month'
             )
         ), columns=[
-            'year', 'month', 'duration', 'count'
+            'year', 'month', 'time_spent', 'number_of_events'
         ])
-        df['count'] = df['count'].astype(int)
-        df['duration'] = pd.to_timedelta(df['duration'])
+        df['time_spent'] = pd.to_timedelta(df['time_spent'])
+        df['number_of_events'] = df['number_of_events'].astype(int)
         return df
 
     @cached_property
     def _number_of_weeks(self):
         """
-        Calculates number of week from smallest start_datetime to current date
+        Calculates number of week from first event till current date
         :return:
         """
         result_dict = self.event_queryset.aggregate(
             start=Min('start_datetime')
         )
         if result_dict['start']:
+            # Days from first events
             total_days = (datetime.now(tz=self.time_zone) - result_dict['start']).days
             return round(total_days / 7)
         else:
@@ -211,49 +216,28 @@ class ReportCalculator(object):
         - Weekly average
         :return: dict
         """
-        monthly_events_df = self._monthly_events_df[
-            ['year', 'month', 'count']
-        ].copy()
-        monthly_events_df.rename(columns={'count': 'value'}, inplace=True)
-
         # Calculating months for most and least number of events
-        sorted_by_count_df = monthly_events_df.sort_values(
-            'value'
-        )[['year', 'month', 'value']]
-
-        if not sorted_by_count_df.empty:
-            sorted_by_count_df['month'] = sorted_by_count_df.apply(
-                lambda x: f"{x['year']}-{x['month']:02}", axis=1
-            )
-        del sorted_by_count_df['year']
-        most_count = sorted_by_count_df.nlargest(1, 'value', keep='all')
-        least_count = sorted_by_count_df.nsmallest(1, 'value', keep='all')
+        least_count, most_count = self._calculate_months_with_min_max(
+            'number_of_events'
+        )
 
         # Calculating number of events for last 3 months
-        last_3_months_df = monthly_events_df[
-            (monthly_events_df['year'] >= self.last_3_month_date.year) &
-            (monthly_events_df['month'] >= self.last_3_month_date.month)
-            ][['month', 'year', 'value']]
-        last_3_months_df.sort_values(['year', 'month'], inplace=True)
-        if not last_3_months_df.empty:
-            last_3_months_df['month'] = last_3_months_df.apply(
-                lambda x: f"{x['year']}-{x['month']:02}", axis=1
-            )
-        del last_3_months_df['year']
+        last_3_months_df = self._calculate_last_3_months('number_of_events')
 
-        # Weekly average
+        # Calculating weekly average
         week_count = self._number_of_weeks
         if week_count:
             weekly_average = np.round(
-                monthly_events_df['value'].sum()/week_count, 2
+                self._monthly_events_df['number_of_events'].sum()/week_count, 2
             )
             weekly_average = weekly_average if not np.isnan(
                 weekly_average) else 0
         else:
             weekly_average = 0
 
+        # Structuring final report dict
         result = {}
-        result['total'] = monthly_events_df['value'].sum()
+        result['total'] = self._monthly_events_df['number_of_events'].sum()
         result['last_3_months'] = last_3_months_df.to_dict(orient='r')
         result['most'] = most_count.to_dict(orient='r')
         result['least'] = least_count.to_dict(orient='r')
@@ -270,43 +254,24 @@ class ReportCalculator(object):
         - Weekly average
         :return: dict
         """
-        monthly_events_df = self._monthly_events_df[
-            ['year', 'month', 'duration']
-        ].copy()
-        monthly_events_df.rename(columns={'duration': 'value'}, inplace=True)
-
         # Calculating months for most and least amount of time spent
-        sorted_by_count_df = monthly_events_df.sort_values(
-            'value'
-        )[['year', 'month', 'value']]
-
-        if not sorted_by_count_df.empty:
-            sorted_by_count_df['month'] = sorted_by_count_df.apply(
-                lambda x: f"{x['year']}-{x['month']:02}", axis=1
-            )
-        del sorted_by_count_df['year']
-        most_time_spent = sorted_by_count_df.nlargest(1, 'value', keep='all')
-        least_time_spent = sorted_by_count_df.nsmallest(1, 'value', keep='all')
-        most_time_spent['value'] = most_time_spent['value'].map(str)
-        least_time_spent['value'] = least_time_spent['value'].map(str)
+        least_time_spent, most_time_spent = self._calculate_months_with_min_max(
+            'time_spent'
+        )
 
         # Calculating time spent for past 3 months
-        last_3_months_df = monthly_events_df[
-            (monthly_events_df['year'] >= self.last_3_month_date.year) &
-            (monthly_events_df['month'] >= self.last_3_month_date.month)
-            ][['month', 'year', 'value']]
-        last_3_months_df.sort_values(['year', 'month'], inplace=True)
-        if not last_3_months_df.empty:
-            last_3_months_df['month'] = last_3_months_df.apply(
-                lambda x: f"{x['year']}-{x['month']:02}", axis=1
-            )
-        last_3_months_df['value'] = last_3_months_df['value'].map(str)
-        del last_3_months_df['year']
+        last_3_months_df = self._calculate_last_3_months('time_spent')
 
+        # Casting pd.Timedelta to readable strings
+        most_time_spent['value'] = most_time_spent['value'].map(str)
+        least_time_spent['value'] = least_time_spent['value'].map(str)
+        last_3_months_df['value'] = last_3_months_df['value'].map(str)
+
+        # Calculating weekly average
         week_count = self._number_of_weeks
         if week_count:
             weekly_average = np.round(
-                monthly_events_df['value'].dt.total_seconds().sum() / week_count
+                self._monthly_events_df['time_spent'].dt.total_seconds().sum() / week_count
             )
             weekly_average = str(pd.Timedelta(
                 seconds=weekly_average if not np.isnan(weekly_average) else 0
@@ -314,13 +279,65 @@ class ReportCalculator(object):
         else:
             weekly_average = 0
 
+        # Structuring final report dict
         result = {}
-        result['total'] = str(monthly_events_df['value'].sum())
+        result['total'] = str(self._monthly_events_df['time_spent'].sum())
         result['last_3_months'] = last_3_months_df.to_dict(orient='r')
         result['most'] = most_time_spent.to_dict(orient='r')
         result['least'] = least_time_spent.to_dict(orient='r')
         result['weekly_average'] = weekly_average
         return result
+
+    def _calculate_months_with_min_max(self, metrics):
+        """
+        Calculates months with most and least count for a given metrics
+        :param metrics: time_spent|number_of_events
+        :return: DataFrame() with least count, DataFrame() for most count
+        """
+        df = self._monthly_events_df.sort_values(
+            metrics
+        )[['year', 'month', metrics]]
+        df.rename(columns={metrics: 'value'}, inplace=True)
+
+        # Combining year and month
+        # i.e. 2018 + 1 --> `2018-01`
+        if not df.empty:
+            df['month'] = df.apply(
+                lambda x: f"{x['year']}-{x['month']:02}", axis=1
+            )
+        del df['year']
+
+        # Retrieving min and max records for a metrics. In case of tie,
+        # it will pull all qualifying records
+        most_time_spent = df.nlargest(1, 'value', keep='all')
+        least_time_spent = df.nsmallest(1, 'value', keep='all')
+
+        return least_time_spent, most_time_spent
+
+    def _calculate_last_3_months(self, metrics):
+        """
+        Calculates data frame with last 3 months for given metrics
+        :param metrics: time_spent|number_of_events
+        :return: DataFrame
+        """
+        df = self._monthly_events_df[
+            ['year', 'month', metrics]
+        ].copy()
+        df.rename(columns={metrics: 'value'}, inplace=True)
+
+        # Retrieving records for past 3 months
+        df = df[(df['year'] >= self.last_3_month_date.year) &
+                (df['month'] >= self.last_3_month_date.month)][
+            ['month', 'year', 'value']
+        ]
+        if not df.empty:
+            # Combining year and month
+            # i.e. 2018 + 1 --> `2018-01`
+            df['month'] = df.apply(
+                lambda x: f"{x['year']}-{x['month']:02}", axis=1
+            )
+        del df['year']
+        return df
 
     def attendee(self):
         """

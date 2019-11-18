@@ -34,8 +34,9 @@ class TestReportCalculator(TestCase):
         df = pd.DataFrame({
             'year': [2019] * 5,
             'month': [1, 11, 2, 9, 7],
-            'count': [5, 8, 10, 15, 18]
+            'number_of_events': [5, 8, 10, 15, 18]
         })
+        df.sort_values(['year', 'month'], inplace=True)
         mocked_monthly_df.return_value = df
         calc = ReportCalculator(self.user)
         calc.last_3_month_date = datetime(2019, 9, 1)
@@ -55,15 +56,11 @@ class TestReportCalculator(TestCase):
         ])
         self.assertEqual(result['weekly_average'], round(56/48, 2))
 
-        # Checking where mocked properties are called
-        mocked_week_count.assert_called_once_with()
-        mocked_monthly_df.assert_called_once_with()
-
         # Checking response when monthly data frame is empty
         df = pd.DataFrame(
-            columns=['year', 'month', 'count']
+            columns=['year', 'month', 'number_of_events']
         )
-        df['count'] = df['count'].astype(int)
+        df['number_of_events'] = df['number_of_events'].astype(int)
         mocked_monthly_df.return_value = df
         result_dict = calc.number_of_events()
         self.assertEqual(result_dict['total'], 0)
@@ -84,10 +81,11 @@ class TestReportCalculator(TestCase):
         df = pd.DataFrame({
             'year': [2019] * 5,
             'month': [1, 11, 2, 9, 7],
-            'duration': [timedelta(hours=4), timedelta(hours=1),
-                         timedelta(hours=32), timedelta(hours=2),
-                         timedelta(hours=9)]
+            'time_spent': [timedelta(hours=4), timedelta(hours=1),
+                           timedelta(hours=32), timedelta(hours=2),
+                           timedelta(hours=9)]
         })
+        df.sort_values(['year', 'month'], inplace=True)
         mocked_monthly_df.return_value = df
         calc = ReportCalculator(self.user)
         calc.last_3_month_date = datetime(2019, 9, 1)
@@ -108,15 +106,11 @@ class TestReportCalculator(TestCase):
 
         self.assertEqual(result['weekly_average'], '0 days 01:00:00')
 
-        # Checking where mocked properties are called
-        mocked_week_count.assert_called_once_with()
-        mocked_monthly_df.assert_called_once_with()
-
         # Checking response when monthly data frame is empty
         df = pd.DataFrame(
-            columns=['year', 'month', 'duration']
+            columns=['year', 'month', 'time_spent']
         )
-        df['duration'] = pd.to_timedelta(df['duration'])
+        df['time_spent'] = pd.to_timedelta(df['time_spent'])
         mocked_monthly_df.return_value = df
         result_dict = calc.time_spent()
         self.assertEqual(result_dict['total'], '0 days 00:00:00')
@@ -127,7 +121,7 @@ class TestReportCalculator(TestCase):
 
     @mock.patch('google_calendar.api.ReportCalculator._attendees_counts',
                 new_callable=PropertyMock)
-    def test_times_pent(self, mocked_attendees_count):
+    def test_attendee(self, mocked_attendees_count):
         """
         Tests calculated stats by mocking _attendees_counts
         :return:
